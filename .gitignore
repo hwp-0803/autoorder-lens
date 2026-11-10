@@ -1,0 +1,15 @@
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.env
+.env.*
+.streamlit/secrets.toml
+.venv/
+venv/
+*.log
+*.bak
+.DS_Store
+*.key
+*.pem
+orders_clean.csv
+orders_backlog_inventory.csv
