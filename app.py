@@ -1002,3 +1002,174 @@ with alert_tab:
         with b:
             st.markdown(info_box('2단계 · 강화 경고',
                 '최근 <b>3개월 연속</b> 같은 방향의 예측편향이 발생하고 해당 3개월 평균이 과거 참고 기준을 초과할 때 표시합니다. 중복 시 강화 경고를 우선합니다.'),
+                unsafe_allow_html=True)
+        st.markdown('<div class="footnote">본 기준은 과거 비교 실험에서 탐색적으로 설정되었습니다. 가격 변화, 계절적 변동 및 데이터 개정을 포함한 구조 변화 판정은 별도 검증이 필요합니다. 경고를 근거로 생산 수량을 자동 변경하지 않습니다.</div>',
+                    unsafe_allow_html=True)
+
+with model_tab:
+    section('모델 검증 및 비교','성능 수치는 동일한 평가기간과 동일한 정보 가용 조건에서 비교해야 합니다.')
+    st.markdown(info_box('모델 선정',
+        '<b>단기: SARIMA AR3</b> · 연 1회 재학습을 적용한 1개월 앞 예측에 사용합니다.<br>'
+        '<b>장기: SARIMA AR6</b> · 12개월 연속 예측에 사용합니다.<br>'
+        '현재 선정은 여러 기간의 탐색적 백테스트 결과에 근거한 것이며, 독립적인 최신 데이터에서 우월성이 확정된 것은 아닙니다.'),
+        unsafe_allow_html=True)
+    if st.button('모델 재검증 및 고객용 보고서 준비', key='calc_models', type='primary'):
+        try:
+            sh=short_cached(y)
+            lo=long_cached(y)
+            st.session_state['score_short']=sh
+            st.session_state['score_long']=lo
+            st.session_state['score_fingerprint']=fingerprint
+            st.rerun()
+        except Exception as exc:
+            st.error(f'검증을 완료하지 못했습니다: {exc}')
+    if st.session_state.get('score_fingerprint')==fingerprint:
+        short=st.session_state['score_short']
+        long=st.session_state['score_long']
+        record_source=f'현재 원천자료 재검증 · 실적 {last:%Y-%m} · 자료 지문 {fingerprint[:12]}'
+    else:
+        short_src,_=choose_source(short_file,['xgb_vs_sarima_short.csv','ar_refit_frequency_comparison.csv'])
+        long_src,_=choose_source(long_file,['long_forecast_ensemble_predictions.csv','xgb_vs_sarima_long.csv'])
+        short=long=None
+        record_source='기존 실험 파일'
+        try:
+            if short_src is not None:
+                short=load_backtest(short_src,'short')
+                if 'Policy' in short.columns:
+                    short=short.loc[short.Policy.eq('연1회')]
+            if long_src is not None:
+                long=load_backtest(long_src,'long')
+            # Imported historical CSV may be based on a different revision of UBTPNO.
+            # Never present conflicting observations as verified performance.
+            for title, table in [('단기', short), ('장기', long)]:
+                if table is None or table.empty:
+                    continue
+                audit = check_backtest_actuals(table, y)
+                if audit.status == 'conflicting':
+                    st.warning(f'{title} 평가자료 확인 실패: {audit.comment}')
+                    if title == '단기':
+                        short = None
+                    else:
+                        long = None
+                elif audit.status == 'unverified':
+                    st.warning(f'{title} 외부 평가자료의 버전 일치 여부를 확인할 수 없습니다. {audit.comment}')
+                else:
+                    st.caption(f'{title} 평가자료 확인: {audit.comment}')
+        except Exception as exc:
+            st.warning(f'검증 파일 형식을 확인해 주십시오: {exc}')
+    if short is None and long is None:
+        st.info('성능평가 자료가 없습니다. ‘모델 재검증 및 고객용 보고서 준비’를 누르면 현재 원천자료로 AR3·AR6를 평가하고 보고서를 자동 준비합니다. 별도 파일은 필요하지 않습니다.')
+    else:
+        st.caption(f'성과 집계 기준: {record_source}')
+    if short is not None and len(short):
+        section('단기 예측 성능','연 1회 학습 후 월별 실적 반영 · MAPE가 낮을수록 정확합니다.')
+        sh=short.loc[short.Model.isin(['AR3','AR6','XGBoost'])].copy()
+        sh['Year']=pd.to_numeric(sh['Year'])
+        t=pd.DataFrame({'2022~2025 평균 MAPE (%)':sh.loc[sh.Year.between(2022,2025)].groupby('Model').APE.mean(),
+                        '2026 MAPE (%)':sh.loc[sh.Year.eq(2026)].groupby('Model').APE.mean()})
+        st.plotly_chart(performance_bars(t,'2022~2025 평균 MAPE (%)','2026 MAPE (%)'),
+                        use_container_width=True,config={'displayModeBar':False})
+        st.dataframe(t.style.format('{:.3f}',na_rep='—'),use_container_width=True)
+    if long is not None and len(long):
+        section('장기 예측 성능','시작점마다 이후 12개월을 연속으로 추정합니다.')
+        lo=long.copy()
+        lo['Model']=lo.Model.replace({'앙상블_50_50':'앙상블 50:50','앙상블':'앙상블 50:50'})
+        by=lo.groupby(['Origin','Model']).APE.mean().unstack()
+        historic=by.drop(index='2026-01',errors='ignore')
+        t=pd.DataFrame({'15개 시작점 평균 MAPE (%)':historic.mean(),
+                        '15개 시작점 중앙값 MAPE (%)':historic.median()})
+        if '2026-01' in by.index:
+            t['2026-01 시작점 MAPE (%)']=by.loc['2026-01']
+        st.plotly_chart(performance_bars(t,'15개 시작점 평균 MAPE (%)','2026-01 시작점 MAPE (%)'),
+                        use_container_width=True,config={'displayModeBar':False})
+        st.dataframe(t.style.format('{:.3f}',na_rep='—'),use_container_width=True)
+        st.caption('겹치는 12개월 예측 구간은 독립적인 평가 표본이 아닙니다. 2026년은 현재 제공된 월까지만 평가됩니다.')
+    older_src,older_desc=choose_source(older_file,['final_historical_robustness_predictions.csv'])
+    if older_src is not None:
+        try:
+            old=load_backtest(older_src,'long')
+            old['Model']=old.Model.replace({'앙상블_50_50':'앙상블'})
+            scores=old.groupby(['Origin','Model']).APE.mean().unstack()
+            section('코로나 이전 기간 추가 검증','2016~2018년 시작점의 12개월 예측 성적입니다.')
+            c=pd.DataFrame({'시작점 평균 MAPE (%)':scores.mean(),
+                            '최악 시작점 MAPE (%)':scores.max(),
+                            '최저 MAPE 시작점 수':scores.idxmin(axis=1).value_counts().reindex(scores.columns,fill_value=0)})
+            st.dataframe(c.style.format({'시작점 평균 MAPE (%)':'{:.3f}',
+                                         '최악 시작점 MAPE (%)':'{:.3f}',
+                                         '최저 MAPE 시작점 수':'{:,.0f}'}),use_container_width=True)
+        except Exception as exc:
+            st.warning(f'추가 검증 파일 오류: {exc}')
+    if st.session_state.get('score_fingerprint')==fingerprint:
+        dl1,dl2=st.columns(2)
+        with dl1:
+            csv_download('단기 평가 결과 CSV',short,'autoorder_short_validation.csv','download_sh')
+        with dl2:
+            csv_download('장기 평가 결과 CSV',long,'autoorder_long_validation.csv','download_lo')
+    section('고객용 성능 리포트', '검증을 한 번 실행하면 모델 버전·실적 기준월·평가기간·표본 수가 반영된 독립형 보고서를 즉시 준비합니다.')
+    st.caption('HTML 파일은 브라우저에서 열어 바로 읽거나 인쇄 메뉴의 PDF 저장 기능으로 공유할 수 있습니다. 성능을 보장하는 인증서는 아닙니다.')
+    if (short is not None and len(short)) or (long is not None and len(long)):
+        st.markdown('<div class="panel-title">검증자료 및 모델 이력</div>', unsafe_allow_html=True)
+        manifest = validation_manifest(short, long, last, record_source)
+        st.dataframe(pd.DataFrame([{'항목': k, '내용': str(v)} for k, v in manifest.items()]),
+            use_container_width=True, hide_index=True)
+        st.caption('평가자료는 현재 확보한 최신 개정 시계열 또는 연결된 실험 기록을 사용합니다. 공표 당시 원본 빈티지 성능 보장은 아닙니다.')
+    if (short is not None and len(short)) or (long is not None and len(long)):
+        try:
+            report_html = make_performance_report(short, long, last, record_source)
+            st.download_button('검증 결과 보고서 HTML 내려받기', report_html,
+                file_name=f'AutoOrder_Lens_Model_Report_{last:%Y%m}.html',
+                mime='text/html',key='dl_performance_html')
+        except Exception as exc:
+            st.warning(f'성능 리포트를 생성하지 못했습니다: {exc}')
+    else:
+        st.info('현재 검증 수치가 없습니다. 위의 「현재 원천자료로 AR3·AR6 재검증」을 실행하거나 기존 분석 결과를 연결하면 보고서를 생성할 수 있습니다.')
+    st.markdown('<div class="footnote">모델 후보 및 임계값이 기존 평가구간에서 탐색적으로 선택되었습니다. 제공된 MAPE는 보장 성능이 아니며, 원천 데이터의 개정·발표 지연을 재현하는 실시간 빈티지 검증은 포함되지 않았습니다.</div>',
+                unsafe_allow_html=True)
+
+with data_tab:
+    section('데이터 정의 및 운영 정책','데이터 출처, 모델 학습 정책, 한계 및 재현 조건을 공개합니다.')
+    quality1,quality2,quality3=st.columns(3)
+    quality1.metric('첫 관측월',f'{y.index[0]:%Y-%m}')
+    quality2.metric('마지막 관측월',f'{last:%Y-%m}')
+    quality3.metric('유효 관측 개월 수',f'{len(y):,}개월')
+    if availability_audit is not None:
+        section('산업 보조지표 최신월 정합성',
+            '산업 변화 분석에서 사용한 공통 비교월과 각 원천의 가장 최근 공개월을 확인합니다.')
+        st.markdown(f'<div class="detail-bar"><b>동일월 비교 · {availability_audit.common_month:%Y-%m}</b> · '
+            '신규주문액·PPI·산업생산지수의 공개 시차를 구분하고 공통 기준월만 분석에 사용합니다.</div>',
+            unsafe_allow_html=True)
+        st.dataframe(availability_audit.status, use_container_width=True, hide_index=True)
+    else:
+        st.caption('산업 변화 분석 탭에서 보조지표 조회 상태와 공통 비교월을 확인할 수 있습니다. 보조지표는 예측모델 입력으로 사용하지 않습니다.')
+    st.markdown(info_box('원천 데이터',
+        '<b>지표:</b> 미국 제조업 신규주문액 · Motor Vehicle Bodies, Trailers, and Parts.<br>'
+        '<b>출처:</b> U.S. Census Bureau M3, FRED 식별자 UBTPNO.<br>'
+        '<b>단위:</b> 백만 미국 달러(명목), 계절조정 전.<br>'
+        '<b>범위:</b> 자동차 판매 대수, 기업별 주문량, 재고 수량 또는 부품 품목별 수요를 직접 나타내지 않습니다.'),
+        unsafe_allow_html=True)
+    st.markdown(info_box('산업 보조지표',
+        '<b>PPI:</b> FRED PCU33633363 (자동차부품 제조업 생산자물가, BLS).<br>'
+        '<b>산업생산:</b> FRED IPG3361T3N (자동차·부품 제조업 생산지수, FRB).<br>'
+        '<b>분석 원칙:</b> 각 월의 전년 동월 대비 증가율만 참고하며, 서로 다른 산업 범위 때문에 실질 수량·인과적 영향으로 표현하지 않습니다. '
+        '보조지표는 AR3·AR6 예측 입력에 추가하지 않았습니다.'), unsafe_allow_html=True)
+    st.markdown(info_box('모델 및 업데이트 방식',
+        f'<b>단기:</b> SARIMAX AR(3), d=1, MA(1), 12개월 계절 차분·계절 MA(1), 코로나 충격 월 통제. 마지막 계수 재추정 기준 {bundle.short_last_refit:%Y-%m}.<br>'
+        f'<b>장기:</b> SARIMAX AR(6), 동일한 계절 구조와 코로나 충격 통제. 전망 시작 시점의 마지막 관측월 {bundle.long_refit_at:%Y-%m}까지 학습.<br>'
+        '<b>데이터:</b> 신규 FRED 공개 시 갱신 요청으로 수집합니다. 공개월과 과거 수치가 변경되면 AR3 예측오차·경고 이력을 자동으로 재평가합니다. 게시 지연과 원천 정정은 별도 관리가 필요합니다.'),
+        unsafe_allow_html=True)
+    st.markdown(info_box('정책·선거 이벤트 활용',
+        '정책 이벤트 탭의 기본 사건은 2026-11-02 확인한 미국 정부 공식 기록에 근거한 정적 목록입니다. '
+        '선거·공식 검토·실제 시행을 명확히 구분하며, 날짜 전후 비교와 해당 시점의 AR3 과거 예측오차를 확인할 수 있습니다. '
+        '정책 효과를 인과 추정하거나 정책 발표를 자동 탐지하지 않으며, 모델 전망을 자동 수정하지 않습니다.'), unsafe_allow_html=True)
+    st.markdown(info_box('실무 적용 및 주의사항',
+        '이 화면은 월별 명목 신규주문액의 집계 추세 및 예측 편향을 참고하기 위한 분석 지원 도구입니다. '
+        '자동 수요 분석은 실적과 전망의 동일 기간 비교를 기반으로 하며, 시나리오는 사용자 가정에 따른 민감도 분석입니다. 생산량·재고 수준·발주량을 자동으로 결정하지 않습니다. '
+        '실제 업무 도입 전 품목별 수량, 리드타임, 재고, 생산능력, 도메인 검증자료를 결합해야 합니다.'),
+        unsafe_allow_html=True)
+    src_snapshot=y.rename('orders').to_frame().rename_axis('Month').reset_index()
+    csv_download('현재 시계열 CSV 내려받기',src_snapshot,f'autoorder_UBTPNO_{last:%Y%m}.csv','dl_series')
+    st.markdown(f'<div class="footnote">시계열: <a href="https://fred.stlouisfed.org/series/UBTPNO" target="_blank">FRED UBTPNO</a> · FRED CSV: {escape(DOWNLOAD_URL)}. 상업용 배포는 원천 데이터의 권한 및 제공 조건을 확인한 후 진행해야 합니다.</div>',unsafe_allow_html=True)
+
+st.markdown('''<div class="footerline">AUTOORDER LENS · DEMAND INTELLIGENCE &nbsp; | &nbsp;
+  Source: U.S. Census Bureau M3 via FRED (UBTPNO) &nbsp; | &nbsp;
+  Forecasts are model estimates, not guaranteed outcomes. &nbsp; | &nbsp; V6.0 FINAL CANDIDATE</div>''',unsafe_allow_html=True)
