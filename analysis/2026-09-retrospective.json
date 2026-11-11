@@ -1,0 +1,28 @@
+{
+  "type": "RETROSPECTIVE RECONSTRUCTION, not stored original prediction",
+  "historical_data": "current revised UBTPNO observations (possible vintage differences)",
+  "training_last_month": "2026-08",
+  "actual_month": "2026-09",
+  "latest_available_month": "2026-09",
+  "unit": "nominal million USD",
+  "actual": 34477.0,
+  "AR3_1_month": {
+    "predicted_million_usd": 34719.16,
+    "error_million_usd": 242.16,
+    "absolute_percentage_error": 0.7024,
+    "bias": "overforecast"
+  },
+  "AR6_first_month_of_12": {
+    "predicted_million_usd": 34599.91,
+    "error_million_usd": 122.91,
+    "absolute_percentage_error": 0.3565,
+    "bias": "overforecast"
+  },
+  "seasonal_naive_previous_year": {
+    "predicted_million_usd": 31668.0,
+    "error_million_usd": -2809.0,
+    "absolute_percentage_error": 8.1475,
+    "bias": "underforecast"
+  },
+  "caveat": "Not timestamped forecast issued in Oct 2026. Revised data may differ."
+}
