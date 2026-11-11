@@ -1,0 +1,36 @@
+name: 2026 September retrospective evaluation
+on:
+  push:
+    paths:
+      - '.github/workflows/evaluate-september.yml'
+      - 'scripts/check_september_2026.py'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install statistical models
+        run: python -m pip install -r requirements.txt
+      - name: Fetch official FRED and reproduce Sep forecast
+        run: python scripts/check_september_2026.py
+      - name: Save evidence to GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add analysis/2026-09-retrospective.json
+          if git diff --cached --quiet; then
+            echo "No changes to retrospective report."
+            exit 0
+          fi
+          git commit -m "analysis: evaluate Sep 2026 forecast using Aug-only observations"
+          git push origin HEAD:main
