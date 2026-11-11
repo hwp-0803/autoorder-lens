@@ -1,0 +1,18 @@
+{
+  "series_id": "UBTPNO",
+  "source_url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UBTPNO&cosd=2005-02-01",
+  "unit": "nominal million USD, not seasonally adjusted",
+  "latest_observation_month": "2026-09",
+  "latest_value_million_usd": 34477.0,
+  "number_of_observations": 260,
+  "snapshot_generated_at_utc": "2026-11-11T13:12:21+00:00",
+  "warning_assessed_through": "2026-09",
+  "short_model": "SARIMA AR3: 1 month ahead, annually refit",
+  "long_model": "SARIMA AR6: fixed-origin next 12 months",
+  "short_last_refit": "2025-12",
+  "long_refit_at": "2026-09",
+  "short_converged": true,
+  "long_converged": true,
+  "forecasts_are_estimates": true,
+  "warning": "Model predictions are not observed sales, production or inventory."
+}
